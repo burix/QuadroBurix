@@ -181,10 +181,13 @@ void onNewClientConnected (int clientSocketFd)
 // [33=100]
 //
 
+
+
+
 int packetReadState = PACKET_READ_STATE_PREFIX;
 int packetReadStateContentCounter = 0;
 char typeBuffer[10];
-char payloadBuffer[10];
+char payloadBuffer[1024];
 
 void onBytesReceived(char* bytes, int size)
 {
@@ -276,6 +279,110 @@ void onBytesReceived(char* bytes, int size)
     }
 }
 
+// --
+// common command index values
+#define ARDUINO_RC_COMMAND_LENGTH 7
+#define ARDUINO_RC_COMMAND_TYPE_INDEX 1
+#define ARDUINO_RC_COMMAND_BEGIN '['
+#define ARDUINO_RC_COMMAND_END ']'
+
+// ---
+// control command byte index values
+#define ARDUINO_RC_CONTROL_TYPE_VALUE '!'
+#define ARDUINO_RC_CONTROL_THROTTLE 2
+#define ARDUINO_RC_CONTROL_YAW 3
+#define ARDUINO_RC_CONTROL_PITCH 4
+#define ARDUINO_RC_CONTROL_ROLL 5
+
+#define PACKET_TYPE_THROTTLE 32;
+#define PACKET_TYPE_YAW 33;
+#define PACKET_TYPE_PITCH 34;
+#define PACKET_TYPE_ROLL 35;
+
+private static final int BUFFER_SIZE = 1024;// bytes
+private byte[] mBuf = new byte[BUFFER_SIZE];
+private int mWritePos = 0;
+
+void onBytesReceived(char* bytes, int size)
+{
+    //        String receivedBytes = "";
+//        for (int i = 0; i < newData.length; i++) {
+//            receivedBytes += "(" + ((int) newData[i]) + ")";
+//        }
+//        Log.i("RCDataInterpreter", "RECEIVED_BYTES [" + receivedBytes + "]");
+
+        /*
+         * Add received bytes to our buffer
+         */
+        writeIntoBuffer(bytes, size);
+
+//        Log.i("RCDataInterpreter", "    availableBytes: " + mWritePos);
+
+        int numProbeBytes = mWritePos - (ARDUINO_RC_COMMAND_LENGTH - 1);
+
+//            Log.i("RCDataInterpreter", "    additionalBytes: " + additionalBytes);
+
+        int i = 0;
+        while (i < numProbeBytes) {
+//                Log.i("RCDataInterpreter", "    checkOnPos: mBuf[" + i + "] = " + mBuf[i] + ", mBuf[" + i + 7 + "] = " + mBuf[i + 7] + ";");
+            if (mBuf[i] == ARDUINO_RC_COMMAND_BEGIN && mBuf[i + (ARDUINO_RC_COMMAND_LENGTH - 1)] == ARDUINO_RC_COMMAND_END) {
+                char commandType = mBuf[i + ARDUINO_RC_COMMAND_TYPE_INDEX];
+                switch (commandType) {
+                    case ARDUINO_RC_CONTROL_TYPE_VALUE:// ascii dec val 33
+                        char throttle = mBuf[i + ARDUINO_RC_CONTROL_THROTTLE];
+                        char yaw = mBuf[i + ARDUINO_RC_CONTROL_YAW];
+                        char pitch = mBuf[i + ARDUINO_RC_CONTROL_PITCH];
+                        char roll = mBuf[i + ARDUINO_RC_CONTROL_ROLL];
+
+                        // these conversion are required in java as java bytes
+                        // are always signed and we need values higher then 127, which
+                        // int supports :)
+                        int throttleInValue = (int) throttle & 0xFF;
+                        int yawInValue = (int) yaw & 0xFF;
+                        int pitchInValue = (int) pitch & 0xFF;
+                        int rollInValue = (int) roll & 0xFF;
+
+                        onPacketReceived(PACKET_TYPE_THROTTLE, throttleInValue);
+                        onPacketReceived(PACKET_TYPE_YAW, yawInValue);
+                        onPacketReceived(PACKET_TYPE_PITCH, pitchInValue);
+                        onPacketReceived(PACKET_TYPE_ROLL, rollInValue);
+
+                        break;
+                }
+                i += ARDUINO_RC_COMMAND_LENGTH;
+            } else {
+                i++;
+            }
+        }
+
+//            Log.i("RCDataInterpreter", "    numCheckBytes: " + i);
+        // if at least of amount of bytes has been probed, remove the written bytes
+        if (i > 0) {
+            mWritePos -= i;
+            if (mWritePos != 0) {
+                memcpy();
+                System.arraycopy(mBuf, i, mBuf, 0, mWritePos);
+            }
+        }
+}
+
+int writeIntoBuffer(char* bytes, int length)
+{
+    if (length > 0) {
+        int newSize = mWritePos + length;
+        if (newSize > BUFFER_SIZE) {
+            return -1;
+        }
+        if (bytes == 0x0) {
+            return -2;
+        }
+        if (length <= 0) {
+            return -3;
+        }
+        memcpy(mBuf + mWritePos, bytes, length);
+        mWritePos = newSize;
+    }
+}
 
 void onPacketReceived(int type, int payload)
 {
