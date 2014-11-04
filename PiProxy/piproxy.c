@@ -31,7 +31,7 @@ int isLedEnabled = 0;
 
 int main( int argc, char *argv[] )
 {
-    printf("INFO\t\Pi-Proxy started!\n\n\n");
+    printf("INFO\t\tPi-Proxy started!\n\n\n");
 
     int serverSocketFd, newClientSocketFd, clilen;
     int portno = SERVER_LISTEN_TCP_PORT;
