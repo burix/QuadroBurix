@@ -167,118 +167,6 @@ void onNewClientConnected (int clientSocketFd)
     }*/
 }
 
-
-#define PACKET_READ_STATE_PREFIX 0
-#define PACKET_READ_STATE_TYPE 1
-#define PACKET_READ_STATE_PAYLOAD 2
-#define PACKET_PREFIX_INT_VALUE 91
-#define PACKET_SEPARATOR_INT_VALUE 61
-#define PACKET_SUFFIX_INT_VALUE 93
-#define DIGIT_BEGIN_ASCII_CODE 48
-#define DIGIT_END_ASCII_CODE 57
-
-//
-// [33=100]
-//
-
-
-
-
-int packetReadState = PACKET_READ_STATE_PREFIX;
-int packetReadStateContentCounter = 0;
-char typeBuffer[10];
-char payloadBuffer[1024];
-
-void onBytesReceived(char* bytes, int size)
-{
-    // printf("DEBUG\t\tonBytesReceived(size(%d))\n",size);
-
-    // blink led when data transfer, similar to the arduino :)
-    isLedEnabled = isLedEnabled == 0 ? 1 : 0;
-    digitalWrite(7,isLedEnabled);
-
-    int i;
-    for(i = 0; i < size;i++)
-    {
-        int byteIntValue = (int)bytes[i];
-        // if char value below 33, it is a control character => ignore it
-        if (byteIntValue <= 32 || byteIntValue == 127)
-        {
-            continue;
-        }
-        // printf("DEBUG\t\t\tonBytesReceived:processByte[index:%d][value:%d]\n",i,byteIntValue);
-        switch(packetReadState)
-        {
-            case PACKET_READ_STATE_PREFIX:
-                if (PACKET_PREFIX_INT_VALUE == byteIntValue)
-                {
-                    // printf("DEBUG\t\t\t->PACKET_PREFIX_INT_VALUE detected!\n");
-                    // printf("DEBUG\t\t\t->CHANGE_TO_STATE: PACKET_READ_STATE_TYPE!\n");
-                    packetReadStateContentCounter = 0;
-                    packetReadState = PACKET_READ_STATE_TYPE;
-                }
-                break;
-            case PACKET_READ_STATE_TYPE:
-                if(byteIntValue >= DIGIT_BEGIN_ASCII_CODE && byteIntValue <= DIGIT_END_ASCII_CODE 
-                    && packetReadStateContentCounter < 8)
-                {
-                    // printf("DEBUG\t\t\t->TYPE_CONTENT detected!\n");
-                    typeBuffer[packetReadStateContentCounter++] = (char)byteIntValue;
-                }
-                else if(byteIntValue==PACKET_SEPARATOR_INT_VALUE)
-                {
-                    // printf("DEBUG\t\t\t->PACKET_SEPARATOR_INT_VALUE detected!\n");
-                    // printf("DEBUG\t\t\t->CHANGE_TO_STATE: PACKET_READ_STATE_PAYLOAD!\n");
-                    packetReadState = PACKET_READ_STATE_PAYLOAD;
-                    typeBuffer[packetReadStateContentCounter++] = 0;// make null terminated string
-                    packetReadStateContentCounter = 0;
-                }
-                else
-                {
-                    // printf("DEBUG\t\t\t->WRONG_BYTE_DURING_TYPE_CONTENT detected!\n");
-                    // printf("DEBUG\t\t\t->CHANGE_TO_STATE: PACKET_READ_STATE_PREFIX!\n");
-                    // this is a error case as we read weather a number nor 
-                    // the separator letter. jump to initial packet reading (prefix).
-                    packetReadStateContentCounter = 0;
-                    packetReadState = PACKET_READ_STATE_PREFIX;
-                }
-                break;
-            case PACKET_READ_STATE_PAYLOAD:
-                if(byteIntValue >= DIGIT_BEGIN_ASCII_CODE && byteIntValue <= DIGIT_END_ASCII_CODE 
-                    && packetReadStateContentCounter < 8)
-                {
-                    // printf("DEBUG\t\t\t->PAYLOAD_CONTENT detected!\n");
-                    payloadBuffer[packetReadStateContentCounter++] = (char)byteIntValue;
-                }
-                else if(byteIntValue==PACKET_SUFFIX_INT_VALUE)
-                {
-                    // printf("DEBUG\t\t\t->PACKET_SUFFIX_INT_VALUE detected!\n");
-                    // printf("DEBUG\t\t\t->CHANGE_TO_STATE: PACKET_READ_STATE_PREFIX!\n");
-                    packetReadState = PACKET_READ_STATE_PREFIX;
-                    payloadBuffer[packetReadStateContentCounter++] = 0;// make null terminated string
-                    packetReadStateContentCounter = 0;
-
-
-                    // printf("DEBUG\t\t\t->TYPE_BUFFER=%s!\n", typeBuffer);
-                    // printf("DEBUG\t\t\t->PAYLOAD_BUFFER=%s!\n", payloadBuffer);
-
-                    // trigger new packet received
-                    onPacketReceived(atoi(typeBuffer),atoi(payloadBuffer));
-                }
-                else
-                {
-                    // printf("DEBUG\t\t\t->WRONG_BYTE_DURING_PAYLOAD_CONTENT detected!\n");
-                    // printf("DEBUG\t\t\t->CHANGE_TO_STATE: PACKET_READ_STATE_PREFIX!\n");
-                    // this is a error case as we read weather a number nor 
-                    // the separator letter. jump to initial packet reading (prefix).
-                    packetReadStateContentCounter = 0;
-                    packetReadState = PACKET_READ_STATE_PREFIX;
-                }
-                break;
-        }
-    }
-}
-
 // --
 // common command index values
 #define ARDUINO_RC_COMMAND_LENGTH 7
@@ -294,14 +182,41 @@ void onBytesReceived(char* bytes, int size)
 #define ARDUINO_RC_CONTROL_PITCH 4
 #define ARDUINO_RC_CONTROL_ROLL 5
 
-#define PACKET_TYPE_THROTTLE 32;
-#define PACKET_TYPE_YAW 33;
-#define PACKET_TYPE_PITCH 34;
-#define PACKET_TYPE_ROLL 35;
+#define PACKET_TYPE_THROTTLE 32
+#define PACKET_TYPE_YAW 33
+#define PACKET_TYPE_PITCH 34
+#define PACKET_TYPE_ROLL 35
 
-private static final int BUFFER_SIZE = 1024;// bytes
-private byte[] mBuf = new byte[BUFFER_SIZE];
-private int mWritePos = 0;
+#define BUFFER_SIZE 1024// bytes
+char mBuf[BUFFER_SIZE];
+int mWritePos = 0;
+
+char throttle;
+char yaw;
+char pitch;
+char roll;
+
+int throttleInValue;
+int yawInValue;
+int pitchInValue;
+int rollInValue;
+
+char commandType;
+int i;
+int numProbeBytes;
+int writeRes;
+
+
+int lastThrottlePacketValue = -1;
+int lastYawPacketValue = -1;
+int lastPitchPacketValue = -1;
+int lastRollPacketValue = -1;
+
+int valueDiff = 0;
+
+int transmitCounter = 0;
+int transmitNum = 100;
+
 
 void onBytesReceived(char* bytes, int size)
 {
@@ -314,38 +229,71 @@ void onBytesReceived(char* bytes, int size)
         /*
          * Add received bytes to our buffer
          */
-        writeIntoBuffer(bytes, size);
+        writeRes = writeIntoBuffer(bytes, size);
+
+        if( writeRes != 0 )
+        {
+            perror("ERROR writing to receive buffer");
+            return;
+        }
 
 //        Log.i("RCDataInterpreter", "    availableBytes: " + mWritePos);
 
-        int numProbeBytes = mWritePos - (ARDUINO_RC_COMMAND_LENGTH - 1);
+        numProbeBytes = mWritePos - (ARDUINO_RC_COMMAND_LENGTH - 1);
 
 //            Log.i("RCDataInterpreter", "    additionalBytes: " + additionalBytes);
 
-        int i = 0;
+        i = 0;
         while (i < numProbeBytes) {
 //                Log.i("RCDataInterpreter", "    checkOnPos: mBuf[" + i + "] = " + mBuf[i] + ", mBuf[" + i + 7 + "] = " + mBuf[i + 7] + ";");
             if (mBuf[i] == ARDUINO_RC_COMMAND_BEGIN && mBuf[i + (ARDUINO_RC_COMMAND_LENGTH - 1)] == ARDUINO_RC_COMMAND_END) {
-                char commandType = mBuf[i + ARDUINO_RC_COMMAND_TYPE_INDEX];
+                commandType = mBuf[i + ARDUINO_RC_COMMAND_TYPE_INDEX];
                 switch (commandType) {
                     case ARDUINO_RC_CONTROL_TYPE_VALUE:// ascii dec val 33
-                        char throttle = mBuf[i + ARDUINO_RC_CONTROL_THROTTLE];
-                        char yaw = mBuf[i + ARDUINO_RC_CONTROL_YAW];
-                        char pitch = mBuf[i + ARDUINO_RC_CONTROL_PITCH];
-                        char roll = mBuf[i + ARDUINO_RC_CONTROL_ROLL];
+                        throttle = mBuf[i + ARDUINO_RC_CONTROL_THROTTLE];
+                        yaw = mBuf[i + ARDUINO_RC_CONTROL_YAW];
+                        pitch = mBuf[i + ARDUINO_RC_CONTROL_PITCH];
+                        roll = mBuf[i + ARDUINO_RC_CONTROL_ROLL];
 
                         // these conversion are required in java as java bytes
                         // are always signed and we need values higher then 127, which
                         // int supports :)
-                        int throttleInValue = (int) throttle & 0xFF;
-                        int yawInValue = (int) yaw & 0xFF;
-                        int pitchInValue = (int) pitch & 0xFF;
-                        int rollInValue = (int) roll & 0xFF;
+                        throttleInValue = (int) throttle & 0xFF;
+                        yawInValue = (int) yaw & 0xFF;
+                        pitchInValue = (int) pitch & 0xFF;
+                        rollInValue = (int) roll & 0xFF;
+                        //transmitCounter++;
+                        //if(transmitCounter==transmitNum)
+                        //{
+                            transmitCounter = 0;
+                            valueDiff = (throttleInValue - lastThrottlePacketValue);
+                            if(valueDiff != 0)
+                            {
+                                lastThrottlePacketValue = throttleInValue;
+                                onPacketReceived(PACKET_TYPE_THROTTLE, throttleInValue);
+                            }
 
-                        onPacketReceived(PACKET_TYPE_THROTTLE, throttleInValue);
-                        onPacketReceived(PACKET_TYPE_YAW, yawInValue);
-                        onPacketReceived(PACKET_TYPE_PITCH, pitchInValue);
-                        onPacketReceived(PACKET_TYPE_ROLL, rollInValue);
+                            valueDiff += (yawInValue - lastYawPacketValue);
+                            if(valueDiff != 0)
+                            {
+                                lastYawPacketValue = yawInValue;
+                                onPacketReceived(PACKET_TYPE_YAW, yawInValue);
+                            }
+
+                            valueDiff += (pitchInValue - lastPitchPacketValue);
+                            if(valueDiff != 0)
+                            {
+                                lastPitchPacketValue = pitchInValue;
+                                onPacketReceived(PACKET_TYPE_PITCH, pitchInValue);
+                            }
+
+                            valueDiff += (rollInValue - lastRollPacketValue);
+                            if(valueDiff != 0)
+                            {
+                                lastRollPacketValue = rollInValue;
+                                onPacketReceived(PACKET_TYPE_ROLL, rollInValue);
+                            }
+                        //}
 
                         break;
                 }
@@ -360,8 +308,7 @@ void onBytesReceived(char* bytes, int size)
         if (i > 0) {
             mWritePos -= i;
             if (mWritePos != 0) {
-                memcpy();
-                System.arraycopy(mBuf, i, mBuf, 0, mWritePos);
+                memcpy(mBuf,mBuf+i,mWritePos);
             }
         }
 }
@@ -382,6 +329,7 @@ int writeIntoBuffer(char* bytes, int length)
         memcpy(mBuf + mWritePos, bytes, length);
         mWritePos = newSize;
     }
+    return 0;
 }
 
 void onPacketReceived(int type, int payload)
