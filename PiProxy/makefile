@@ -1,7 +1,7 @@
 all: piproxy
 
 piproxy: piproxy.o
-	gcc -lwiringPi piproxy.o -o piproxy
+	gcc -lwiringPi -lpthread piproxy.o -o piproxy
 
 piproxy.o: piproxy.c
 	gcc -c piproxy.c

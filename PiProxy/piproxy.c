@@ -2,9 +2,11 @@
 #include <sys/types.h> 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <pthread.h>
 
 #include <wiringPi.h>
 #include <wiringSerial.h>
@@ -23,17 +25,20 @@
 void onNewClientConnected (int clientSocketFd);
 void onBytesReceived(char* bytes, int size);
 void onPacketReceived(int type, int payload);
+void *timeout_thread (void *ch);
 
 // file descriptor of serial device
 int serialFd;
 
 int isLedEnabled = 0;
 
+int newClientSocketFd;
+
 int main( int argc, char *argv[] )
 {
     printf("INFO\t\tPi-Proxy started!\n\n\n");
 
-    int serverSocketFd, newClientSocketFd, clilen;
+    int serverSocketFd, clilen;
     int portno = SERVER_LISTEN_TCP_PORT;
 
     struct sockaddr_in serv_addr, cli_addr;
@@ -96,7 +101,7 @@ int main( int argc, char *argv[] )
         if (newClientSocketFd < 0)
         {
             perror("ERROR\t\tERROR on accept");
-            //exit(1);
+            //exit(1); 
         }
 
         printf("INFO\t\tNew client with address %s connected!\n",inet_ntoa(cli_addr.sin_addr));
@@ -109,11 +114,20 @@ int main( int argc, char *argv[] )
         exit(1);
         }*/
         
+        pthread_t p1;
+        char *bla = "as";
+
+        pthread_create (&p1, NULL, timeout_thread, bla);
+
         //if (pid == 0)  
         //{
             /* This is the client process */
         //    close(sockfd);
         onNewClientConnected(newClientSocketFd);
+
+
+        printf("\nINFO\t\t after onNewClientConnected!");
+
         close(newClientSocketFd);
         //    exit(0);
         //}
@@ -124,16 +138,70 @@ int main( int argc, char *argv[] )
     } /* end of while */
 }
 
+void *timeout_thread (void *ch)
+{
+    printf("\nINFO\t\tTimeout thread started!");
+    fflush(stdout);
+    sleep(10);
+    printf("\nINFO\t\tTimeout detected!");
+    fflush(stdout);
+      //  write(newClientSocketFd,"I got your message",18);
+      //close(newClientSocketFd);
+}
+
+
+void onNewClientConnectedBLA(int clientSocketFd)
+{
+    fd_set readfds;
+    int n = 0;
+    struct timeval tv;
+    char buffer[256];
+    bzero(buffer,256);
+    int rv;
+
+    // clear the set ahead of time
+    FD_ZERO(&readfds);
+
+    // add our descriptors to the set
+    FD_SET(clientSocketFd, &readfds);
+
+    // wait until either socket has data ready to be recv()d (timeout 5 secs)
+    tv.tv_sec = 5;
+
+    while((rv = select(clientSocketFd+1, &readfds, NULL, NULL, &tv)) >= 0)
+    {
+        // one or both of the descriptors have data
+        if (FD_ISSET(clientSocketFd, &readfds)) 
+        {
+            n = recv(clientSocketFd, buffer, 256, 0);
+            onBytesReceived(buffer,n);
+        }
+    }
+
+    if (rv == -1) 
+    {
+        perror("select"); // error occurred in select()
+    } 
+    else if (rv == 0) 
+    {
+        printf("Timeout occurred!  No data after 10.5 seconds.\n");
+    } 
+}
+
+
 void onNewClientConnected (int clientSocketFd)
 {
     int n = 0;
     char buffer[256];
     bzero(buffer,256);
 
-    while((n = read(clientSocketFd,buffer,255)) >= 0)
-    {
-        onBytesReceived(buffer,n);
+       // printf("\nINFO\t\t before recv");
 
+    while((n = recv(clientSocketFd,buffer,255,0)) > 0)
+    {
+        //printf("\nINFO\t\t before onBytesReceived");
+        onBytesReceived(buffer,n);
+        //printf("\nINFO\t\t after onBytesReceived");
 /*      // DEBUG
         printf("stringContent: %s\n",sendBuffer);
 
@@ -166,6 +234,7 @@ void onNewClientConnected (int clientSocketFd)
         exit(1);
     }*/
 }
+
 
 // --
 // common command index values
